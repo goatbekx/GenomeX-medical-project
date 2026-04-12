@@ -3,7 +3,7 @@ import axios from 'axios';
 import { UploadCloud, Activity, ChevronRight, FileText, Info, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { syndromeData } from './syndromes';
 
-const API_URL = "http://localhost:8000"; 
+const API_URL = "genomex-medical-project-production.up.railway.app"; 
 
 export default function App() {
   const [view, setView] = useState('landing'); 
