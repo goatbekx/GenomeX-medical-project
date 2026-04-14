@@ -43,7 +43,7 @@ export default function App() {
 
   const processQueue = async (itemsToProcess) => {
     setIsProcessingBulk(true);
-    const chunkSize = 3; // Process 3 at a time
+    const chunkSize = 5; // Process 3 at a time
 
     for (let i = 0; i < itemsToProcess.length; i += chunkSize) {
         const chunk = itemsToProcess.slice(i, i + chunkSize);
