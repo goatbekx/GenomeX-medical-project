@@ -93,13 +93,14 @@ async def explain_syndrome(payload: ExplainPayload):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.post("/test-load")
-async def test_load():
-    # Имитируем задержку нейросети (1-2 секунды) без траты денег
-    heavy_data = "genome_test_string" * 1000
-    for _ in range(10000):
-        _ = len(heavy_data.split("_"))
-        
-    # И небольшая имитация ожидания ответа от ИИ
-    await asyncio.sleep(0.5)
-    return {"status": "success", "message": "CPU is sweating!"}
+@app.post("/test-memory")
+async def test_memory():
+    # Создаем гигантскую строку (букву "A" повторяем 15 миллионов раз).
+    # В Python такая строка весит примерно 15 Мегабайт.
+    heavy_chunk = "A" * 15_000_000 
+    
+    # Заставляем сервер "держать" эту строку в памяти 3 секунды.
+    # За эти 3 секунды прилетят остальные запросы и тоже создадут по 15 МБ.
+    await asyncio.sleep(3)
+    
+    return {"status": "success", "memory_mb": len(heavy_chunk) / 1000000}
