@@ -186,6 +186,10 @@ export default function App() {
                                                 <div className="mt-auto bg-slate-50 p-3 rounded-lg border border-blue-100 text-xs text-slate-700 whitespace-pre-wrap">
                                                     <div className="font-semibold flex items-center gap-1 mb-1 text-blue-800"><CheckCircle2 size={14}/> ИИ-Заключение:</div>
                                                     {item.explanation}
+                                                    </div>
+                                            ) : item.label === 'not_karyotype' ? (
+                                                <div className="mt-auto w-full py-2 bg-slate-100 text-slate-400 font-medium rounded-lg text-sm flex justify-center items-center gap-2 border border-slate-200">
+                                                    <AlertCircle size={16} /> Анализ невозможен
                                                 </div>
                                             ) : (
                                                 <button 

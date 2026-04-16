@@ -39,6 +39,9 @@ async def analyze_karyotype(payload: ImagePayload):
 
         system_prompt = """
         You are a specialized YOLOv8 computer vision model for karyotype analysis. Your task is to classify the uploaded image into one category and provide a confidence score.
+
+        CRITICAL RULE: First, verify if the image actually contains a karyotype (chromosomes). If the image is a person, animal, landscape, random object, or clearly NOT a medical karyotype, you MUST classify it as "not_karyotype".
+
         Output strictly in JSON format:
         {
           "label": "[down, patau, edwards, cri_du_chat, wolf, trans_down, turner, klinefelter, jacobs, triple_x, normal]",
@@ -76,6 +79,7 @@ async def explain_syndrome(payload: ExplainPayload):
         - Цитогенетика (что с хромосомами).
         - Клинические признаки.
         - Рекомендации.
+        Сформулируй ответ с двоеточиями, например как Цитогенетика: текст, Клинические признаки: текст и так далее с третим пунктом
         """
 
         response = await client.chat.completions.create(
