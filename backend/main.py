@@ -96,5 +96,10 @@ async def explain_syndrome(payload: ExplainPayload):
 @app.post("/test-load")
 async def test_load():
     # Имитируем задержку нейросети (1-2 секунды) без траты денег
-    await asyncio.sleep(1.5)
-    return {"status": "success", "message": "Server survived!"}
+    heavy_data = "genome_test_string" * 1000
+    for _ in range(10000):
+        _ = len(heavy_data.split("_"))
+        
+    # И небольшая имитация ожидания ответа от ИИ
+    await asyncio.sleep(0.5)
+    return {"status": "success", "message": "CPU is sweating!"}
