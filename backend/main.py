@@ -5,6 +5,7 @@ from openai import AsyncOpenAI
 import os
 from dotenv import load_dotenv
 import json
+import asyncio
 
 load_dotenv()
 
