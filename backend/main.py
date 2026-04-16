@@ -91,3 +91,9 @@ async def explain_syndrome(payload: ExplainPayload):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/test-load")
+async def test_load():
+    # Имитируем задержку нейросети (1-2 секунды) без траты денег
+    await asyncio.sleep(1.5)
+    return {"status": "success", "message": "Server survived!"}
