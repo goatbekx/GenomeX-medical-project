@@ -77,6 +77,28 @@ The checked checkpoint’s SHA-256 is `5289fec6654dd35356bed5601d02f7bbd410b6342
 
 ## Deployment
 
+### Cloudflare
+
+The Cloudflare configuration serves the React build and forwards `/analyze` and `/health` to FastAPI on the same origin. It uses one Basic container (1 GiB RAM) with a one-minute idle timeout. Cloudflare Containers requires Workers Paid. [Cloudflare container pricing](https://developers.cloudflare.com/containers/platform/pricing/)
+
+Place the trusted `best.pt` at `backend/best.pt`. Wrangler builds the Linux image and pushes it to the account’s Cloudflare Container registry. The checkpoint stays out of Git and out of the public frontend assets. Start Docker Desktop before building or deploying.
+
+Run these commands from the repository root in PowerShell.
+
+```powershell
+npm.cmd ci --prefix frontend
+$env:VITE_API_URL = '/'
+npm.cmd run build --prefix frontend -- --outDir dist-cloudflare
+Remove-Item Env:VITE_API_URL
+npx.cmd --yes wrangler@4.168.0 deploy
+```
+
+After rollout, open the reported Worker URL, check `/health`, and run **Попробовать пример** in the app. The first API request may take longer while the container starts.
+
+A local Linux test capped at 0.25 vCPU and 1 GiB RAM loaded the checkpoint in 16.9 seconds. Five warm sample requests had a 3.1-second median. Peak container memory was 490 MiB after the 12-megapixel test. These measurements were taken in Docker on a local machine.
+
+### Railway
+
 The original frontend targeted a Railway backend where `POST /analyze` called Gemini through OpenRouter. The original Railway URL returned 404 for `/openapi.json` during verification. The frontend host and current Railway service settings are pending confirmation.
 
 1. For a Railway staging service, set the project root to `/backend` and use Railpack. Stage `best.pt` through approved private storage, such as a Railway volume mounted at `/model`. Set `MODEL_PATH=/model/best.pt`, `OMP_NUM_THREADS=1`, and `MKL_NUM_THREADS=1`.

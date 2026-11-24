@@ -1,5 +1,6 @@
 .venv/
 .npm-cache/
+.wrangler/
 .env
 .env.*
 *.pt

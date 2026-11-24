@@ -1,0 +1,24 @@
+{
+  "name": "genome-x",
+  "main": "cloudflare/worker.mjs",
+  "compatibility_date": "2026-11-24",
+  "workers_dev": true,
+  "assets": {
+    "directory": "frontend/dist-cloudflare",
+    "binding": "ASSETS",
+    "run_worker_first": ["/analyze", "/health"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "API", "class_name": "GenomeApi" }]
+  },
+  "exports": {
+    "GenomeApi": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "containers": [{
+    "class_name": "GenomeApi",
+    "scheduling_policy": "durable_object",
+    "images": {
+      "base": { "dockerfile": "./backend/Dockerfile", "build_context": "./backend" }
+    }
+  }]
+}
