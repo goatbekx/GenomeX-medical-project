@@ -4,11 +4,11 @@ Genome X is a computer vision research demo for karyotypes, images that show a c
 
 **April 2026 olympiad:** second place, as reported by the project author. See [Recognition](#recognition) for the April model and pending verification.
 
-**Live demo:** [Add the public URL after approval] · **Short walkthrough:** [Add recording URL]
+**Live demo:** [Open Genome X](https://genome-x-karyotype.pages.dev/) · **Short walkthrough:** [Add recording URL]
 
 <img src="docs/inference-mobile.png" alt="Genome X on a phone, showing a box around the three copies of chromosome 21 and an 89.7 percent model confidence score" width="414">
 
-*Actual local inference on the bundled sample. The model drew one box around the chromosome 21 group and returned `down_syndrome` at 89.7% confidence.*
+*Actual local FastAPI inference on the bundled sample. The model drew one box around the chromosome 21 group and returned `down_syndrome` at 89.7% confidence.*
 
 ## My contributions
 
@@ -16,7 +16,7 @@ I trained the project’s vision model, built the FastAPI backend, and developed
 
 ## Model and output
 
-The current build serves the June 5, 2026 `best.pt` checkpoint. It is an Ultralytics **YOLO11n** object detector fine-tuned from `yolo11n.pt` with Ultralytics 8.4.60. The API decodes still JPEG or PNG images, applies EXIF orientation, converts to RGB, and runs inference on CPU with a 640-pixel inference size and a 0.25 confidence threshold.
+The local FastAPI backend serves the June 5, 2026 `best.pt` checkpoint, and the live Node.js API runs an ONNX export of the same checkpoint. It is an Ultralytics **YOLO11n** object detector fine-tuned from `yolo11n.pt` with Ultralytics 8.4.60. Both APIs decode still JPEG or PNG images, apply EXIF orientation, convert to RGB, and run inference on CPU with a 640-pixel inference size and a 0.25 confidence threshold.
 
 | Checkpoint label | Region highlighted in the public examples |
 | --- | --- |
@@ -26,7 +26,7 @@ The current build serves the June 5, 2026 `best.pt` checkpoint. It is an Ultraly
 
 The public examples show boxes around groups containing three copies. **[Confirm whether training annotations consistently covered the whole trisomy group using the annotation guidelines or labeled export.]** The API returns image dimensions and a list of detections with a class, confidence score, and `[left, top, right, bottom]` box in pixels of the oriented image. The model has three classes and no normal class. An empty list means that no detection passed the threshold. Use the demo for research and education only. Upload public or synthetic images.
 
-The training metadata references `Genome-X-visualmodel-2/data.yaml`, which matches the owner-provided Roboflow ID `genome-x-visualmodel/2` and suggests dataset provenance. Universe lists an object-detection project with the same name and three classes, 82 images, and one hosted model. This app runs the local checkpoint. **[Add the direct Universe project URL and confirm whether its hosted weights are this checkpoint, a separate model you trained, or an external reference.]** [Roboflow Universe search results](https://universe.roboflow.com/search?q=like%3Ayolov5-w7acb%2Fyolov5-chromosome)
+The training metadata references `Genome-X-visualmodel-2/data.yaml`, which matches the owner-provided Roboflow ID `genome-x-visualmodel/2` and suggests dataset provenance. Universe lists an object-detection project with the same name and three classes, 82 images, and one hosted model. Both Genome X backends use weights from `best.pt`. **[Add the direct Universe project URL and confirm whether its hosted weights are this checkpoint, a separate model you trained, or an external reference.]** [Roboflow Universe search results](https://universe.roboflow.com/search?q=like%3Ayolov5-w7acb%2Fyolov5-chromosome)
 
 ## Evaluation and limitations
 
@@ -77,9 +77,27 @@ The checked checkpoint’s SHA-256 is `5289fec6654dd35356bed5601d02f7bbd410b6342
 
 ## Deployment
 
+### Netlify Node.js API and Cloudflare Pages
+
+The hosted Node.js port preserves the `/analyze` request and detection response. The FastAPI instructions above run the PyTorch checkpoint locally. On three public karyotypes, the Node.js port returned the same classes as FastAPI and every box coordinate was within two pixels. Model confidence can vary slightly with image resizing. [Live API readiness](https://genome-x-karyotype-api.netlify.app/health)
+
+Run these commands from the repository root with the backend Python environment active.
+
+```bash
+python -m pip install onnx==1.23.2
+python node-backend/export_model.py
+cd node-backend
+npm ci
+npx --yes netlify-cli@27.20.1 build --offline
+```
+
+Build the Netlify function on Linux x86-64 so it includes the correct image decoder. The generated model stays in the function bundle and out of Git and the public site directory. Set the Netlify function environment variable `CORS_ORIGINS` to the Cloudflare Pages site’s HTTPS origin. Before building the frontend for Pages, set `VITE_API_URL` to the Netlify API origin and `VITE_MAX_IMAGE_MIB=4` to fit Netlify’s buffered request limit. [Netlify Functions limits](https://docs.netlify.com/build/functions/configuration/)
+
+Netlify Free has a hard monthly credit limit, and production deploys and function usage draw from that allowance. [Netlify pricing and limits](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/credit-based-pricing-plans/)
+
 ### Cloudflare
 
-The Cloudflare configuration serves the React build and forwards `/analyze` and `/health` to FastAPI on the same origin. It uses one Basic container (1 GiB RAM) with a one-minute idle timeout. Cloudflare Containers requires Workers Paid. [Cloudflare container pricing](https://developers.cloudflare.com/containers/platform/pricing/)
+The optional all-Cloudflare configuration serves the React build and forwards `/analyze` and `/health` to FastAPI on the same origin. It uses one Basic container (1 GiB RAM) with a one-minute idle timeout. Cloudflare Containers requires Workers Paid. [Cloudflare container pricing](https://developers.cloudflare.com/containers/platform/pricing/)
 
 Place the trusted `best.pt` at `backend/best.pt`. Wrangler builds the Linux image and pushes it to the account’s Cloudflare Container registry. The checkpoint stays out of Git and out of the public frontend assets. Start Docker Desktop before building or deploying.
 

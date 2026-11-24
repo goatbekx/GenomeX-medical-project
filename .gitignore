@@ -1,6 +1,8 @@
 .venv/
 .npm-cache/
 .wrangler/
+.netlify/
+node-backend/node_modules/
 .env
 .env.*
 *.pt

@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-cloudflare
+dist-netlify-pages
 dist-ssr
 *.local
 

@@ -5,7 +5,8 @@ import { Activity, AlertCircle, ChevronRight, UploadCloud } from 'lucide-react';
 const API_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const SAMPLE_URL = `${import.meta.env.BASE_URL}sample-trisomy-21.jpg`;
 const SAMPLE_SOURCE = 'https://wellcomecollection.org/works/wmcdanw6';
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_MIB = import.meta.env.VITE_MAX_IMAGE_MIB === '4' ? 4 : 5;
+const MAX_IMAGE_BYTES = MAX_IMAGE_MIB * 1024 * 1024;
 const labels = {
   down_syndrome: 'Синдром Дауна',
   edwards_syndrome: 'Синдром Эдвардса',
@@ -23,7 +24,7 @@ function readImage(file) {
 
 function inferenceError(error) {
   switch (error.response?.status) {
-    case 413: return 'Изображение превышает 5 МиБ или 12 мегапикселей.';
+    case 413: return `Изображение превышает ${MAX_IMAGE_MIB} МиБ или 12 мегапикселей.`;
     case 422: return 'Загрузите читаемое изображение JPEG или PNG.';
     case 500: return 'Модель не смогла обработать изображение. Попробуйте снова.';
     default: return 'Сервис анализа недоступен. Попробуйте позже.';
@@ -118,7 +119,7 @@ export default function App() {
 
   async function processFiles(files, sample = false) {
     const batch = files.map(file => {
-      const error = file.size > MAX_IMAGE_BYTES ? 'Изображение превышает 5 МиБ.' : '';
+      const error = file.size > MAX_IMAGE_BYTES ? `Изображение превышает ${MAX_IMAGE_MIB} МиБ.` : '';
       const preview = error ? null : URL.createObjectURL(file);
       if (preview) previews.current.add(preview);
       return { id: crypto.randomUUID(), name: file.name, preview, sample, error, status: error ? 'error' : 'pending' };
@@ -211,7 +212,7 @@ export default function App() {
           <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border mb-6">
             <h1 className="text-2xl font-bold">Исследовательское демо</h1>
             <p className="mt-2 text-sm text-slate-700">Только для демонстрации и исследований. Не загружайте данные пациентов. Оценки модели нельзя использовать для диагностики.</p>
-            <p className="mt-2 text-sm text-slate-600">До 50 изображений за раз. JPEG или PNG, до 5 МиБ и 12 мегапикселей каждое.</p>
+            <p className="mt-2 text-sm text-slate-600">До 50 изображений за раз. JPEG или PNG, до {MAX_IMAGE_MIB} МиБ и 12 мегапикселей каждое.</p>
             <div className="mt-4 flex flex-col sm:flex-row flex-wrap gap-3">
               <button type="button" onClick={trySample} disabled={isProcessing} className="rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-50 px-5 py-3 font-semibold text-white">Попробовать пример</button>
               <button type="button" onClick={() => fileInputRef.current.click()} disabled={isProcessing} className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-5 py-3 font-semibold hover:bg-slate-100 disabled:opacity-50">
@@ -235,7 +236,7 @@ export default function App() {
         <main className="p-4 md:p-8 max-w-3xl mx-auto w-full">
           <div className="bg-white p-6 rounded-2xl border">
             <h1 className="text-3xl font-bold mb-4">О проекте GenomeX</h1>
-            <p className="text-slate-700">GenomeX — исследовательский проект по компьютерному зрению. FastAPI запускает модель обнаружения объектов на сервере, а React показывает рамки, классы и оценки уверенности модели.</p>
+            <p className="text-slate-700">GenomeX — исследовательский проект по компьютерному зрению. Сервер запускает модель обнаружения объектов, а React показывает рамки, классы и оценки уверенности модели.</p>
             <p className="mt-3 text-slate-700">Демо охватывает три класса. Модель может пропускать области и ошибаться при определении класса.</p>
           </div>
         </main>
