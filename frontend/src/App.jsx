@@ -1,259 +1,254 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { UploadCloud, Activity, ChevronRight, FileText, Info, AlertCircle, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { syndromeData } from './syndromes';
+import { Activity, AlertCircle, ChevronRight, UploadCloud } from 'lucide-react';
 
-// Railway Production URL
-const API_URL = "https://genomex-medical-project-production.up.railway.app"; 
+const API_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+const SAMPLE_URL = `${import.meta.env.BASE_URL}sample-trisomy-21.jpg`;
+const SAMPLE_SOURCE = 'https://wellcomecollection.org/works/wmcdanw6';
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const labels = {
+  down_syndrome: 'Синдром Дауна',
+  edwards_syndrome: 'Синдром Эдвардса',
+  patau_syndrome: 'Синдром Патау',
+};
+
+function readImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Не удалось прочитать изображение.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function inferenceError(error) {
+  switch (error.response?.status) {
+    case 413: return 'Изображение превышает 5 МиБ или 12 мегапикселей.';
+    case 422: return 'Загрузите читаемое изображение JPEG или PNG.';
+    case 500: return 'Модель не смогла обработать изображение. Попробуйте снова.';
+    default: return 'Сервис анализа недоступен. Попробуйте позже.';
+  }
+}
+
+function ResultCard({ item }) {
+  const prediction = item.prediction;
+
+  return (
+    <article className="rounded-xl border bg-white overflow-hidden">
+      {item.preview && (
+        <div className="relative bg-slate-100">
+          <img src={item.preview} alt="Кариотип для анализа" className="block w-full h-auto" />
+          {prediction?.detections.length > 0 && (
+            <svg
+              aria-hidden="true"
+              viewBox={`0 0 ${prediction.width} ${prediction.height}`}
+              className="absolute inset-0 w-full h-full"
+            >
+              {prediction.detections.map(({ box: [left, top, right, bottom] }, index) => (
+                <g key={index}>
+                  <rect x={left} y={top} width={right - left} height={bottom - top} fill="#0f766e" fillOpacity="0.16" stroke="#0f766e" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                  {prediction.detections.length > 1 && (
+                    <text x={left} y={top} dominantBaseline="hanging" fill="#064e3b" stroke="white" strokeWidth="3" paintOrder="stroke" fontSize={prediction.width * 0.04} fontWeight="bold">{index + 1}</text>
+                  )}
+                </g>
+              ))}
+            </svg>
+          )}
+        </div>
+      )}
+      <div className="p-4">
+        <h3 className="font-semibold break-words">{item.name}</h3>
+        {item.sample && (
+          <p className="text-sm text-slate-600">
+            Wessex Reg. Genetics Centre · <a href={SAMPLE_SOURCE} className="text-blue-700 underline">Wellcome Collection</a>
+            {' · '}<a href="https://creativecommons.org/licenses/by/4.0/" className="text-blue-700 underline">CC BY 4.0</a>
+          </p>
+        )}
+        <div className="mt-3" aria-live="polite">
+          {item.status === 'pending' && <p className="text-sm text-slate-600">В очереди</p>}
+          {item.status === 'analyzing' && <p className="text-sm text-blue-700">Анализ изображения…</p>}
+          {item.error && (
+            <p className="flex items-start gap-2 text-sm text-red-700">
+              <AlertCircle className="shrink-0" size={16} /> {item.error}
+            </p>
+          )}
+          {prediction && (prediction.detections.length === 0 ? (
+            <p className="text-sm text-slate-700">Модель не нашла областей выше порога уверенности. По этому результату нельзя судить о норме кариотипа.</p>
+          ) : (
+            <ul aria-label="Обнаруженные области" className="space-y-2">
+              {prediction.detections.map(({ label, confidence }, index) => (
+                <li key={index} className="flex flex-wrap items-baseline justify-between gap-x-3 rounded-lg bg-teal-50 px-3 py-2 text-sm">
+                  <span className="font-semibold text-teal-950">
+                    {prediction.detections.length > 1 && `${index + 1}. `}{labels[label] || label}
+                  </span>
+                  <span className="text-teal-800">{(confidence * 100).toFixed(1)}% · уверенность модели</span>
+                </li>
+              ))}
+            </ul>
+          ))}
+        </div>
+      </div>
+    </article>
+  );
+}
 
 export default function App() {
-  const [view, setView] = useState('landing'); 
-  const [items, setItems] = useState([]); 
-  const [isProcessingBulk, setIsProcessingBulk] = useState(false);
+  const [view, setView] = useState('landing');
+  const [items, setItems] = useState([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [sampleError, setSampleError] = useState('');
   const fileInputRef = useRef(null);
+  const previews = useRef(new Set());
 
-  const pendingCount = items.filter(i => i.status === 'pending' || i.status === 'analyzing').length;
-  const totalCount = items.length;
+  useEffect(() => {
+    const urls = previews.current;
+    return () => urls.forEach(url => URL.revokeObjectURL(url));
+  }, []);
 
-  const handleFileUpload = async (e) => {
-    // Limit to 50 files
-    const files = Array.from(e.target.files).slice(0, 50);
-    if (files.length === 0) return;
+  function updateItem(id, update) {
+    setItems(previous => previous.map(item => item.id === id ? { ...item, ...update } : item));
+  }
 
-    // Convert to Base64 and setup initial state
-    const newItems = await Promise.all(files.map(async (file) => {
-        return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve({
-                id: Math.random().toString(36).substr(2, 9),
-                image: reader.result,
-                status: 'pending', 
-                label: null,
-                confidence: null,
-                explanation: null,
-                isExplaining: false
-            });
-            reader.readAsDataURL(file);
-        });
-    }));
+  function clearResults() {
+    previews.current.forEach(url => URL.revokeObjectURL(url));
+    previews.current.clear();
+    setItems([]);
+    setSampleError('');
+  }
 
-    setItems(prev => [...newItems, ...prev]);
-    processQueue(newItems);
-  };
+  async function processFiles(files, sample = false) {
+    const batch = files.map(file => {
+      const error = file.size > MAX_IMAGE_BYTES ? 'Изображение превышает 5 МиБ.' : '';
+      const preview = error ? null : URL.createObjectURL(file);
+      if (preview) previews.current.add(preview);
+      return { id: crypto.randomUUID(), name: file.name, preview, sample, error, status: error ? 'error' : 'pending' };
+    });
+    setItems(previous => [...batch, ...previous]);
 
-  const processQueue = async (itemsToProcess) => {
-    setIsProcessingBulk(true);
-    const chunkSize = 5; // Process 3 at a time
+    for (const [index, file] of files.entries()) {
+      const item = batch[index];
+      if (item.error) continue;
+      updateItem(item.id, { status: 'analyzing' });
 
-    for (let i = 0; i < itemsToProcess.length; i += chunkSize) {
-        const chunk = itemsToProcess.slice(i, i + chunkSize);
-        
-        await Promise.all(chunk.map(async (item) => {
-            setItems(prev => prev.map(p => p.id === item.id ? {...p, status: 'analyzing'} : p));
-            
-            try {
-                const response = await axios.post(`${API_URL}/analyze`, { image_base64: item.image });
-                setItems(prev => prev.map(p => p.id === item.id ? {
-                    ...p, 
-                    status: 'done', 
-                    label: response.data.label, 
-                    confidence: response.data.confidence
-                } : p));
-            } catch (error) {
-                console.error(error);
-                setItems(prev => prev.map(p => p.id === item.id ? {...p, status: 'error'} : p));
-            }
-        }));
+      let image;
+      try {
+        image = await readImage(file);
+      } catch (error) {
+        updateItem(item.id, { status: 'error', error: error.message });
+        continue;
+      }
+
+      try {
+        const { data } = await axios.post(`${API_URL}/analyze`, { image_base64: image }, { timeout: 60_000 });
+        if (!Array.isArray(data?.detections) || !data.width || !data.height) {
+          updateItem(item.id, { status: 'error', error: 'Сервис вернул несовместимый формат результата.' });
+          continue;
+        }
+        updateItem(item.id, { status: 'done', prediction: data });
+      } catch (error) {
+        updateItem(item.id, { status: 'error', error: inferenceError(error) });
+      }
     }
-    setIsProcessingBulk(false);
-  };
+  }
 
-  const getExplanation = async (id, label) => {
-    setItems(prev => prev.map(p => p.id === id ? {...p, isExplaining: true} : p));
+  async function handleFileUpload(event) {
+    const files = Array.from(event.target.files).slice(0, 50);
+    event.target.value = '';
+    if (files.length === 0 || isProcessing) return;
+    setIsProcessing(true);
+    setSampleError('');
     try {
-        const syndromeName = syndromeData[label]?.title || label;
-        const response = await axios.post(`${API_URL}/explain`, { syndrome_id: syndromeName });
-        setItems(prev => prev.map(p => p.id === id ? {...p, explanation: response.data.explanation, isExplaining: false} : p));
-    } catch (error) {
-        setItems(prev => prev.map(p => p.id === id ? {...p, isExplaining: false, explanation: "Ошибка сервера при генерации отчета."} : p));
+      await processFiles(files);
+    } finally {
+      setIsProcessing(false);
     }
-  };
+  }
+
+  async function trySample() {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    setSampleError('');
+    try {
+      const response = await fetch(SAMPLE_URL);
+      if (!response.ok) throw new Error('Sample unavailable');
+      const file = new File([await response.blob()], 'Пример кариотипа', { type: 'image/jpeg' });
+      await processFiles([file], true);
+    } catch {
+      setSampleError('Не удалось загрузить пример. Попробуйте ещё раз.');
+    } finally {
+      setIsProcessing(false);
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col font-sans bg-slate-50">
-      <nav className="bg-white shadow-sm px-6 py-4 flex justify-between items-center sticky top-0 z-50">
-        <div className="text-2xl font-bold text-blue-600 flex items-center gap-2 cursor-pointer" onClick={() => setView('landing')}>
+      <nav aria-label="Навигация" className="bg-white shadow-sm px-4 sm:px-6 py-4 flex flex-wrap gap-4 justify-between items-center">
+        <button type="button" className="text-2xl font-bold text-blue-700 flex items-center gap-2" onClick={() => setView('landing')}>
           <Activity size={28} /> GenomeX
-        </div>
-        <div className="flex gap-6 text-sm font-medium text-slate-600">
-          <button onClick={() => setView('app')} className={`hover:text-blue-600 transition ${view === 'app' ? 'text-blue-600' : ''}`}>Воркспейс</button>
-          <button onClick={() => setView('about')} className={`hover:text-blue-600 transition ${view === 'about' ? 'text-blue-600' : ''}`}>О нас</button>
-          <button onClick={() => setView('future')} className={`hover:text-blue-600 transition ${view === 'future' ? 'text-blue-600' : ''}`}>Будущее проекта</button>
+        </button>
+        <div className="flex flex-wrap gap-4 text-sm font-medium text-slate-700">
+          <button type="button" onClick={() => setView('app')} aria-current={view === 'app' ? 'page' : undefined} className="hover:text-blue-700 aria-[current=page]:text-blue-700">Анализ</button>
+          <button type="button" onClick={() => setView('about')} aria-current={view === 'about' ? 'page' : undefined} className="hover:text-blue-700 aria-[current=page]:text-blue-700">О проекте</button>
+          <button type="button" onClick={() => setView('future')} aria-current={view === 'future' ? 'page' : undefined} className="hover:text-blue-700 aria-[current=page]:text-blue-700">Планы</button>
         </div>
       </nav>
 
-      <div className="flex-1 flex flex-col">
-        {view === 'landing' && (
-            <div className="flex-1 flex items-center justify-center bg-[url('https://images.unsplash.com/photo-1530026405186-ed1f139313f8?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center relative">
-                <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"></div>
-                <div className="relative z-10 text-center max-w-3xl text-white px-6">
-                    <h1 className="text-5xl md:text-6xl font-extrabold mb-6 tracking-tight">Будущее генетического скрининга.</h1>
-                    <p className="text-xl md:text-2xl mb-10 text-slate-300 font-light">
-                        Интеллектуальный анализ кариотипов с использованием YOLOv8 и LLM. Массовая диагностика до 50 снимков за сессию.
-                    </p>
-                    <button onClick={() => setView('app')} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-10 rounded-full text-lg transition flex items-center gap-3 mx-auto shadow-lg shadow-blue-600/30">
-                        Начать скрининг <ChevronRight />
-                    </button>
-                </div>
+      {view === 'landing' && (
+        <main className="flex-1 flex items-center justify-center bg-slate-900 bg-[url('https://images.unsplash.com/photo-1530026405186-ed1f139313f8?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center relative">
+          <div className="absolute inset-0 bg-slate-900/75 backdrop-blur-sm"></div>
+          <div className="relative text-center max-w-3xl text-white px-6 py-12">
+            <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight">Анализ изображений кариотипов</h1>
+            <p className="text-lg md:text-xl my-6 text-slate-200">Исследовательское демо. YOLO11n отмечает области, которые модель связывает с тремя классами трисомий.</p>
+            <button type="button" onClick={() => setView('app')} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-full flex items-center gap-2 mx-auto">
+              Открыть демо <ChevronRight size={20} />
+            </button>
+          </div>
+        </main>
+      )}
+
+      {view === 'app' && (
+        <main className="p-4 md:p-8 max-w-7xl mx-auto w-full">
+          <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border mb-6">
+            <h1 className="text-2xl font-bold">Исследовательское демо</h1>
+            <p className="mt-2 text-sm text-slate-700">Только для демонстрации и исследований. Не загружайте данные пациентов. Оценки модели нельзя использовать для диагностики.</p>
+            <p className="mt-2 text-sm text-slate-600">До 50 изображений за раз. JPEG или PNG, до 5 МиБ и 12 мегапикселей каждое.</p>
+            <div className="mt-4 flex flex-col sm:flex-row flex-wrap gap-3">
+              <button type="button" onClick={trySample} disabled={isProcessing} className="rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-50 px-5 py-3 font-semibold text-white">Попробовать пример</button>
+              <button type="button" onClick={() => fileInputRef.current.click()} disabled={isProcessing} className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-5 py-3 font-semibold hover:bg-slate-100 disabled:opacity-50">
+                <UploadCloud size={20} /> Загрузить изображения
+              </button>
+              <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept="image/jpeg,image/png" />
+              {items.length > 0 && (
+                <button type="button" onClick={clearResults} disabled={isProcessing} className="px-3 py-3 text-sm font-medium text-slate-700 underline disabled:opacity-50">Очистить результаты</button>
+              )}
             </div>
-        )}
+            {isProcessing && <p role="status" className="mt-3 text-sm text-blue-700">Обработка изображений…</p>}
+            {sampleError && <p role="alert" className="mt-3 text-sm text-red-700">{sampleError}</p>}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-start">
+            {items.map(item => <ResultCard key={item.id} item={item} />)}
+          </div>
+        </main>
+      )}
 
-        {view === 'app' && (
-            <div className="p-4 md:p-8 max-w-7xl mx-auto w-full">
-                
-                {/* Medical Disclaimer */}
-                <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl mb-6 flex gap-3 text-sm font-medium items-start">
-                    <AlertTriangle className="shrink-0 mt-0.5 text-red-600" size={18} />
-                    <p>
-                        <strong>ВНИМАНИЕ:</strong> GenomeX является исследовательским инструментом. Результаты анализа формируются искусственным интеллектом, не являются окончательным медицинским диагнозом и требуют обязательной верификации врачом-генетиком.
-                    </p>
-                </div>
+      {view === 'about' && (
+        <main className="p-4 md:p-8 max-w-3xl mx-auto w-full">
+          <div className="bg-white p-6 rounded-2xl border">
+            <h1 className="text-3xl font-bold mb-4">О проекте GenomeX</h1>
+            <p className="text-slate-700">GenomeX — исследовательский проект по компьютерному зрению. FastAPI запускает модель обнаружения объектов на сервере, а React показывает рамки, классы и оценки уверенности модели.</p>
+            <p className="mt-3 text-slate-700">Демо охватывает три класса. Модель может пропускать области и ошибаться при определении класса.</p>
+          </div>
+        </main>
+      )}
 
-                {/* Upload Header */}
-                <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                    <div>
-                        <h2 className="text-2xl font-bold text-slate-800">Массовый анализ</h2>
-                        <p className="text-slate-500 text-sm mt-1">Загрузите до 50 фотографий кариотипов (JPEG/PNG)</p>
-                    </div>
-                    
-                    <div className="flex items-center gap-4 w-full md:w-auto">
-                        {isProcessingBulk && (
-                            <div className="flex items-center gap-2 text-blue-600 font-medium bg-blue-50 px-4 py-2 rounded-full text-sm shrink-0">
-                                <Activity size={16} className="animate-spin" /> В очереди: {pendingCount}
-                            </div>
-                        )}
-                        <button 
-                            onClick={() => fileInputRef.current.click()}
-                            className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-xl transition flex items-center justify-center gap-2 w-full md:w-auto"
-                        >
-                            <UploadCloud size={20} /> Загрузить
-                        </button>
-                        <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept="image/*" />
-                    </div>
-                </div>
-
-                {/* Grid Results */}
-                {totalCount > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                        {items.map(item => (
-                            <div key={item.id} className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col transition hover:shadow-md">
-                                <div className="h-40 bg-slate-100 relative">
-                                    <img src={item.image} alt="karyotype" className="w-full h-full object-cover" />
-                                    
-                                    {item.status === 'pending' && (
-                                        <div className="absolute inset-0 bg-slate-900/50 flex flex-col items-center justify-center text-white text-sm font-medium">Ожидание...</div>
-                                    )}
-                                    {item.status === 'analyzing' && (
-                                        <div className="absolute inset-0 bg-blue-900/60 flex flex-col items-center justify-center text-white text-sm font-medium backdrop-blur-sm">
-                                            <Activity size={24} className="animate-spin mb-2" /> Анализ YOLOv8...
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="p-4 flex-1 flex flex-col">
-                                    {item.status === 'error' && (
-                                        <div className="text-red-500 flex items-center gap-2 text-sm"><AlertCircle size={16}/> Ошибка анализа</div>
-                                    )}
-
-                                    {item.status === 'done' && (
-                                        <>
-                                            <div className="flex justify-between items-start mb-2 gap-2">
-                                                <div className="font-bold text-slate-800 leading-tight">
-                                                    {syndromeData[item.label]?.title || "Неизвестно"}
-                                                </div>
-                                                <div className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded shrink-0">
-                                                    {(item.confidence * 100).toFixed(1)}%
-                                                </div>
-                                            </div>
-                                            
-                                            {!item.explanation && (
-                                                <p className="text-xs text-slate-500 mb-4 line-clamp-2 flex-1">
-                                                    {syndromeData[item.label]?.desc}
-                                                </p>
-                                            )}
-
-                                            {item.explanation ? (
-                                                <div className="mt-auto bg-slate-50 p-3 rounded-lg border border-blue-100 text-xs text-slate-700 whitespace-pre-wrap">
-                                                    <div className="font-semibold flex items-center gap-1 mb-1 text-blue-800"><CheckCircle2 size={14}/> ИИ-Заключение:</div>
-                                                    {item.explanation}
-                                                    </div>
-                                            ) : item.label === 'not_karyotype' ? (
-                                                <div className="mt-auto w-full py-2 bg-slate-100 text-slate-400 font-medium rounded-lg text-sm flex justify-center items-center gap-2 border border-slate-200">
-                                                    <AlertCircle size={16} /> Анализ невозможен
-                                                </div>
-                                            ) : (
-                                                <button 
-                                                    onClick={() => getExplanation(item.id, item.label)}
-                                                    disabled={item.isExplaining}
-                                                    className="mt-auto w-full py-2 bg-slate-100 hover:bg-blue-50 text-blue-600 font-medium rounded-lg text-sm transition flex justify-center items-center gap-2"
-                                                >
-                                                    {item.isExplaining ? <Activity size={16} className="animate-spin" /> : <Info size={16} />}
-                                                    {item.isExplaining ? "Генерация..." : "Клинический отчет"}
-                                                </button>
-                                            )}
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="text-center py-24 bg-white rounded-2xl border border-dashed border-slate-300">
-                        <FileText size={48} className="mx-auto text-slate-300 mb-4" />
-                        <h3 className="text-xl font-medium text-slate-700">Рабочая область пуста</h3>
-                        <p className="text-slate-500 mt-2 text-sm">Загрузите изображения для начала скрининга.</p>
-                    </div>
-                )}
-            </div>
-        )}
-
-        {view === 'about' && (
-            <div className="p-8 max-w-3xl mx-auto w-full mt-10">
-                <h1 className="text-4xl font-bold text-slate-800 mb-6">О проекте GenomeX</h1>
-                <div className="prose prose-slate prose-lg">
-                    <p className="mb-4 text-slate-600 leading-relaxed">
-                        <strong>GenomeX</strong> — это исследовательский проект на стыке медицины и глубокого машинного обучения. Наша цель — автоматизировать рутинный процесс визуального анализа хромосом (кариотипирования), снизить влияние человеческого фактора и ускорить постановку предварительных диагнозов.
-                    </p>
-                    <p className="mb-4 text-slate-600 leading-relaxed">
-                        В основе системы лежит архитектура компьютерного зрения <strong>YOLOv8</strong>, оптимизированная для детекции хромосомных аномалий. Для интерпретации результатов используется интеграция с Большими Языковыми Моделями (LLM), которые формируют структурированные клинические отчеты.
-                    </p>
-                    <p className="text-slate-600 leading-relaxed">
-                        Проект разработан для участия в медицинских и технологических олимпиадах как концепт будущего цифровой лаборатории.
-                    </p>
-                </div>
-            </div>
-        )}
-
-        {view === 'future' && (
-            <div className="p-8 max-w-3xl mx-auto w-full mt-10">
-                <h1 className="text-4xl font-bold text-slate-800 mb-6">Вектор развития</h1>
-                <div className="space-y-6">
-                    <div className="bg-white p-6 rounded-xl border shadow-sm">
-                        <h3 className="text-xl font-bold text-slate-800 mb-2">📱 Мобильное приложение</h3>
-                        <p className="text-slate-600">Разработка кроссплатформенного приложения для врачей, позволяющего делать скрининг прямо со смартфона через окуляр микроскопа.</p>
-                    </div>
-                    <div className="bg-white p-6 rounded-xl border shadow-sm">
-                        <h3 className="text-xl font-bold text-slate-800 mb-2">🏥 Интеграция с ЛИС (DICOM)</h3>
-                        <p className="text-slate-600">Поддержка медицинского стандарта DICOM для прямой выгрузки снимков из лабораторных информационных систем больниц.</p>
-                    </div>
-                    <div className="bg-white p-6 rounded-xl border shadow-sm">
-                        <h3 className="text-xl font-bold text-slate-800 mb-2">🧠 Расширение датасета</h3>
-                        <p className="text-slate-600">Обучение нейросети на выявление более редких микроделеций и транслокаций, помимо основных трисомий.</p>
-                    </div>
-                </div>
-            </div>
-        )}
-      </div>
+      {view === 'future' && (
+        <main className="p-4 md:p-8 max-w-3xl mx-auto w-full">
+          <div className="bg-white p-6 rounded-2xl border">
+            <h1 className="text-3xl font-bold mb-4">Планы проекта</h1>
+            <p className="text-slate-700">Проверить ошибки на независимой выборке и сравнить версии модели на одних и тех же изображениях с одинаковыми метриками.</p>
+          </div>
+        </main>
+      )}
     </div>
   );
 }
