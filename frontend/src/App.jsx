@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Activity, AlertCircle, ChevronRight, UploadCloud } from 'lucide-react';
 
+const BROWSER_INFERENCE = import.meta.env.MODE === 'browser';
 const API_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const SAMPLE_URL = `${import.meta.env.BASE_URL}sample-trisomy-21.jpg`;
 const SAMPLE_SOURCE = 'https://wellcomecollection.org/works/wmcdanw6';
@@ -17,17 +18,19 @@ function readImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('Не удалось прочитать изображение.'));
+    reader.onerror = () => reject(Object.assign(new Error('Не удалось прочитать изображение.'), { status: 422 }));
     reader.readAsDataURL(file);
   });
 }
 
 function inferenceError(error) {
-  switch (error.response?.status) {
+  switch (error.response?.status ?? error.status) {
     case 413: return `Изображение превышает ${MAX_IMAGE_MIB} МиБ или 12 мегапикселей.`;
     case 422: return 'Загрузите читаемое изображение JPEG или PNG.';
     case 500: return 'Модель не смогла обработать изображение. Попробуйте снова.';
-    default: return 'Сервис анализа недоступен. Попробуйте позже.';
+    default: return BROWSER_INFERENCE
+      ? 'Не удалось запустить модель в браузере. Проверьте подключение или попробуйте другой браузер.'
+      : 'Сервис анализа недоступен. Попробуйте позже.';
   }
 }
 
@@ -131,16 +134,15 @@ export default function App() {
       if (item.error) continue;
       updateItem(item.id, { status: 'analyzing' });
 
-      let image;
       try {
-        image = await readImage(file);
-      } catch (error) {
-        updateItem(item.id, { status: 'error', error: error.message });
-        continue;
-      }
-
-      try {
-        const { data } = await axios.post(`${API_URL}/analyze`, { image_base64: image }, { timeout: 60_000 });
+        let data;
+        if (BROWSER_INFERENCE) {
+          const { predictInBrowser } = await import('./browser-inference.js');
+          data = await predictInBrowser(file);
+        } else {
+          const image = await readImage(file);
+          ({ data } = await axios.post(`${API_URL}/analyze`, { image_base64: image }, { timeout: 60_000 }));
+        }
         if (!Array.isArray(data?.detections) || !data.width || !data.height) {
           updateItem(item.id, { status: 'error', error: 'Сервис вернул несовместимый формат результата.' });
           continue;
@@ -213,6 +215,7 @@ export default function App() {
             <h1 className="text-2xl font-bold">Исследовательское демо</h1>
             <p className="mt-2 text-sm text-slate-700">Только для демонстрации и исследований. Не загружайте данные пациентов. Оценки модели нельзя использовать для диагностики.</p>
             <p className="mt-2 text-sm text-slate-600">До 50 изображений за раз. JPEG или PNG, до {MAX_IMAGE_MIB} МиБ и 12 мегапикселей каждое.</p>
+            {BROWSER_INFERENCE && <p className="mt-2 text-sm text-slate-600">При первом анализе браузер загружает модель. Изображения остаются на вашем устройстве.</p>}
             <div className="mt-4 flex flex-col sm:flex-row flex-wrap gap-3">
               <button type="button" onClick={trySample} disabled={isProcessing} className="rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-50 px-5 py-3 font-semibold text-white">Попробовать пример</button>
               <button type="button" onClick={() => fileInputRef.current.click()} disabled={isProcessing} className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-5 py-3 font-semibold hover:bg-slate-100 disabled:opacity-50">
@@ -236,7 +239,7 @@ export default function App() {
         <main className="p-4 md:p-8 max-w-3xl mx-auto w-full">
           <div className="bg-white p-6 rounded-2xl border">
             <h1 className="text-3xl font-bold mb-4">О проекте GenomeX</h1>
-            <p className="text-slate-700">GenomeX — исследовательский проект по компьютерному зрению. Сервер запускает модель обнаружения объектов, а React показывает рамки, классы и оценки уверенности модели.</p>
+            <p className="text-slate-700">GenomeX — исследовательский проект по компьютерному зрению. Модель обнаружения объектов выделяет области на изображении. React показывает рамки, классы и оценки уверенности модели.</p>
             <p className="mt-3 text-slate-700">Демо охватывает три класса. Модель может пропускать области и ошибаться при определении класса.</p>
           </div>
         </main>

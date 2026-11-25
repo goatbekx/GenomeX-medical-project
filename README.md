@@ -16,7 +16,7 @@ I trained the project’s vision model, built the FastAPI backend, and developed
 
 ## Model and output
 
-The local FastAPI backend serves the June 5, 2026 `best.pt` checkpoint, and the live Node.js API runs an ONNX export of the same checkpoint. It is an Ultralytics **YOLO11n** object detector fine-tuned from `yolo11n.pt` with Ultralytics 8.4.60. Both APIs decode still JPEG or PNG images, apply EXIF orientation, convert to RGB, and run inference on CPU with a 640-pixel inference size and a 0.25 confidence threshold.
+The local FastAPI backend serves the June 5, 2026 `best.pt` checkpoint. The Node.js and browser builds use an ONNX export of the same checkpoint. It is an Ultralytics **YOLO11n** object detector fine-tuned from `yolo11n.pt` with Ultralytics 8.4.60. Each build decodes still JPEG or PNG images, applies EXIF orientation, converts to RGB, and runs inference on CPU with a 640-pixel inference size and a 0.25 confidence threshold.
 
 | Checkpoint label | Region highlighted in the public examples |
 | --- | --- |
@@ -77,9 +77,15 @@ The checked checkpoint’s SHA-256 is `5289fec6654dd35356bed5601d02f7bbd410b6342
 
 ## Deployment
 
+### Cloudflare Pages browser build
+
+The browser build runs the ONNX export in a Web Worker. Cloudflare Pages serves the frontend, model, and WebAssembly runtime as static assets. Uploaded images stay on the visitor’s device. The regular frontend build uses the configured API, including FastAPI on localhost.
+
+Generate `node-backend/model/genome-x.onnx` with the export command below. Then run `npm ci` and `npm run build:browser` in `frontend/`. Use `npm run preview -- --outDir dist-browser` to test that build locally. The model is included only in `dist-browser/`. Publishing that directory makes the ONNX export publicly downloadable. [Cloudflare Pages limits](https://developers.cloudflare.com/pages/platform/limits/)
+
 ### Netlify Node.js API and Cloudflare Pages
 
-The hosted Node.js port preserves the `/analyze` request and detection response. The FastAPI instructions above run the PyTorch checkpoint locally. On three public karyotypes, the Node.js port returned the same classes as FastAPI and every box coordinate was within two pixels. Model confidence can vary slightly with image resizing. [Live API readiness](https://genome-x-karyotype-api.netlify.app/health)
+The Netlify Node.js port preserves the `/analyze` request and detection response. The FastAPI instructions above run the PyTorch checkpoint locally. On three public karyotypes, the Node.js port returned the same classes as FastAPI and every box coordinate was within two pixels. Model confidence can vary slightly with image resizing. [Netlify API readiness](https://genome-x-karyotype-api.netlify.app/health)
 
 Run these commands from the repository root with the backend Python environment active.
 
