@@ -14,7 +14,7 @@ ort.env.wasm.wasmPaths = { mjs: loaderUrl, wasm: wasmUrl };
 let session;
 
 function getSession() {
-  session ??= fetch(MODEL_URL, { signal: AbortSignal.timeout(90_000) })
+  session ??= fetch(MODEL_URL)
     .then(response => {
       if (!response.ok) throw new Error('ONNX checkpoint unavailable');
       return response.arrayBuffer();
