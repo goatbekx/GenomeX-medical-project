@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { errorText, messages } from './messages.js';
 import { Activity, AlertCircle, ChevronRight, UploadCloud } from 'lucide-react';
 
 const BROWSER_INFERENCE = import.meta.env.MODE === 'browser';
@@ -8,40 +9,36 @@ const SAMPLE_URL = `${import.meta.env.BASE_URL}sample-trisomy-21.jpg`;
 const SAMPLE_SOURCE = 'https://wellcomecollection.org/works/wmcdanw6';
 const MAX_IMAGE_MIB = import.meta.env.VITE_MAX_IMAGE_MIB === '4' ? 4 : 5;
 const MAX_IMAGE_BYTES = MAX_IMAGE_MIB * 1024 * 1024;
-const labels = {
-  down_syndrome: 'Синдром Дауна',
-  edwards_syndrome: 'Синдром Эдвардса',
-  patau_syndrome: 'Синдром Патау',
-};
+const views = { '#scan': 'app', '#about': 'about', '#plans': 'future' };
+const hashes = { app: '#scan', about: '#about', future: '#plans', landing: '' };
 
 function readImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(Object.assign(new Error('Не удалось прочитать изображение.'), { status: 422 }));
+    reader.onerror = () => reject(Object.assign(new Error('Unreadable image'), { status: 422 }));
     reader.readAsDataURL(file);
   });
 }
 
 function inferenceError(error) {
+  if (BROWSER_INFERENCE && error.name === 'TimeoutError') return 'timeout';
   switch (error.response?.status ?? error.status) {
-    case 413: return `Изображение превышает ${MAX_IMAGE_MIB} МиБ или 12 мегапикселей.`;
-    case 422: return 'Загрузите читаемое изображение JPEG или PNG.';
-    case 500: return 'Модель не смогла обработать изображение. Попробуйте снова.';
-    default: return BROWSER_INFERENCE
-      ? 'Не удалось запустить модель в браузере. Проверьте подключение или попробуйте другой браузер.'
-      : 'Сервис анализа недоступен. Попробуйте позже.';
+    case 413: return 'imageLimit';
+    case 422: return 'invalid';
+    case 500: return 'model';
+    default: return BROWSER_INFERENCE ? 'worker' : 'api';
   }
 }
 
-function ResultCard({ item }) {
+function ResultCard({ item, copy }) {
   const prediction = item.prediction;
 
   return (
     <article className="rounded-xl border bg-white overflow-hidden">
       {item.preview && (
         <div className="relative bg-slate-100">
-          <img src={item.preview} alt="Кариотип для анализа" className="block w-full h-auto" />
+          <img src={item.preview} alt={copy.preview} className="block w-full h-auto" />
           {prediction?.detections.length > 0 && (
             <svg
               aria-hidden="true"
@@ -61,7 +58,7 @@ function ResultCard({ item }) {
         </div>
       )}
       <div className="p-4">
-        <h3 className="font-semibold break-words">{item.name}</h3>
+        <h3 className="font-semibold break-words">{item.sample ? copy.sampleName : item.name}</h3>
         {item.sample && (
           <p className="text-sm text-slate-600">
             Wessex Reg. Genetics Centre · <a href={SAMPLE_SOURCE} className="text-blue-700 underline">Wellcome Collection</a>
@@ -69,23 +66,23 @@ function ResultCard({ item }) {
           </p>
         )}
         <div className="mt-3" aria-live="polite">
-          {item.status === 'pending' && <p className="text-sm text-slate-600">В очереди</p>}
-          {item.status === 'analyzing' && <p className="text-sm text-blue-700">Анализ изображения…</p>}
+          {item.status === 'pending' && <p className="text-sm text-slate-600">{copy.pending}</p>}
+          {item.status === 'analyzing' && <p className="text-sm text-blue-700">{copy.analyzing}</p>}
           {item.error && (
             <p className="flex items-start gap-2 text-sm text-red-700">
-              <AlertCircle className="shrink-0" size={16} /> {item.error}
+              <AlertCircle className="shrink-0" size={16} /> {errorText(copy, item.error, MAX_IMAGE_MIB)}
             </p>
           )}
           {prediction && (prediction.detections.length === 0 ? (
-            <p className="text-sm text-slate-700">Модель не нашла областей выше порога уверенности. По этому результату нельзя судить о норме кариотипа.</p>
+            <p className="text-sm text-slate-700">{copy.empty}</p>
           ) : (
-            <ul aria-label="Обнаруженные области" className="space-y-2">
+            <ul aria-label={copy.detections} className="space-y-2">
               {prediction.detections.map(({ label, confidence }, index) => (
                 <li key={index} className="flex flex-wrap items-baseline justify-between gap-x-3 rounded-lg bg-teal-50 px-3 py-2 text-sm">
                   <span className="font-semibold text-teal-950">
-                    {prediction.detections.length > 1 && `${index + 1}. `}{labels[label] || label}
+                    {prediction.detections.length > 1 && `${index + 1}. `}{copy.labels[label] || label}
                   </span>
-                  <span className="text-teal-800">{(confidence * 100).toFixed(1)}% · уверенность модели</span>
+                  <span className="text-teal-800">{(confidence * 100).toFixed(1)}% · {copy.confidence}</span>
                 </li>
               ))}
             </ul>
@@ -97,7 +94,9 @@ function ResultCard({ item }) {
 }
 
 export default function App() {
-  const [view, setView] = useState('landing');
+  const [view, setView] = useState(() => views[window.location.hash] ?? 'landing');
+  const [language, setLanguage] = useState(() => new URLSearchParams(window.location.search).get('lang') === 'en' ? 'en' : 'ru');
+  const copy = messages[language];
   const [items, setItems] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [sampleError, setSampleError] = useState('');
@@ -108,6 +107,15 @@ export default function App() {
     const urls = previews.current;
     return () => urls.forEach(url => URL.revokeObjectURL(url));
   }, []);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('lang', language);
+    url.hash = hashes[view];
+    window.history.replaceState(null, '', url);
+    document.documentElement.lang = language;
+    document.title = `Genome X — ${copy.research}`;
+  }, [copy, language, view]);
 
   function updateItem(id, update) {
     setItems(previous => previous.map(item => item.id === id ? { ...item, ...update } : item));
@@ -122,7 +130,7 @@ export default function App() {
 
   async function processFiles(files, sample = false) {
     const batch = files.map(file => {
-      const error = file.size > MAX_IMAGE_BYTES ? `Изображение превышает ${MAX_IMAGE_MIB} МиБ.` : '';
+      const error = file.size > MAX_IMAGE_BYTES ? 'fileSize' : '';
       return { id: crypto.randomUUID(), name: file.name, sample, error, status: error ? 'error' : 'pending' };
     });
     setItems(previous => [...batch, ...previous]);
@@ -142,7 +150,7 @@ export default function App() {
           ({ data } = await axios.post(`${API_URL}/analyze`, { image_base64: image }, { timeout: 60_000 }));
         }
         if (!Array.isArray(data?.detections) || !data.width || !data.height) {
-          updateItem(item.id, { status: 'error', error: 'Сервис вернул несовместимый формат результата.' });
+          updateItem(item.id, { status: 'error', error: 'response' });
           continue;
         }
         // Let inference check the pixel limit before the page decodes the preview.
@@ -150,7 +158,13 @@ export default function App() {
         previews.current.add(preview);
         updateItem(item.id, { status: 'done', prediction: data, preview });
       } catch (error) {
-        updateItem(item.id, { status: 'error', error: inferenceError(error) });
+        const reason = inferenceError(error);
+        updateItem(item.id, { status: 'error', error: reason });
+        if (reason === 'timeout') {
+          const queued = new Set(batch.slice(index + 1).filter(entry => !entry.error).map(entry => entry.id));
+          setItems(previous => previous.map(entry => queued.has(entry.id) ? { ...entry, status: 'error', error: 'skipped' } : entry));
+          break;
+        }
       }
     }
   }
@@ -173,12 +187,12 @@ export default function App() {
     setIsProcessing(true);
     setSampleError('');
     try {
-      const response = await fetch(SAMPLE_URL);
+      const response = await fetch(SAMPLE_URL, { signal: AbortSignal.timeout(15_000) });
       if (!response.ok) throw new Error('Sample unavailable');
-      const file = new File([await response.blob()], 'Пример кариотипа', { type: 'image/jpeg' });
+      const file = new File([await response.blob()], 'sample-trisomy-21.jpg', { type: 'image/jpeg' });
       await processFiles([file], true);
     } catch {
-      setSampleError('Не удалось загрузить пример. Попробуйте ещё раз.');
+      setSampleError('sample');
     } finally {
       setIsProcessing(false);
     }
@@ -186,14 +200,18 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col font-sans bg-slate-50">
-      <nav aria-label="Навигация" className="bg-white shadow-sm px-4 sm:px-6 py-4 flex flex-wrap gap-4 justify-between items-center">
+      <nav aria-label={copy.navigation} className="bg-white shadow-sm px-4 sm:px-6 py-4 flex flex-wrap gap-4 justify-between items-center">
         <button type="button" className="text-2xl font-bold text-blue-700 flex items-center gap-2" onClick={() => setView('landing')}>
           <Activity size={28} /> GenomeX
         </button>
-        <div className="flex flex-wrap gap-4 text-sm font-medium text-slate-700">
-          <button type="button" onClick={() => setView('app')} aria-current={view === 'app' ? 'page' : undefined} className="hover:text-blue-700 aria-[current=page]:text-blue-700">Анализ</button>
-          <button type="button" onClick={() => setView('about')} aria-current={view === 'about' ? 'page' : undefined} className="hover:text-blue-700 aria-[current=page]:text-blue-700">О проекте</button>
-          <button type="button" onClick={() => setView('future')} aria-current={view === 'future' ? 'page' : undefined} className="hover:text-blue-700 aria-[current=page]:text-blue-700">Планы</button>
+        <div className="flex flex-wrap items-center gap-4 text-sm font-medium text-slate-700">
+          <button type="button" onClick={() => setView('app')} aria-current={view === 'app' ? 'page' : undefined} className="hover:text-blue-700 aria-[current=page]:text-blue-700">{copy.scan}</button>
+          <button type="button" onClick={() => setView('about')} aria-current={view === 'about' ? 'page' : undefined} className="hover:text-blue-700 aria-[current=page]:text-blue-700">{copy.about}</button>
+          <button type="button" onClick={() => setView('future')} aria-current={view === 'future' ? 'page' : undefined} className="hover:text-blue-700 aria-[current=page]:text-blue-700">{copy.plans}</button>
+          <select aria-label={copy.language} value={language} onChange={event => setLanguage(event.target.value)} className="rounded border border-slate-300 bg-white px-2 py-1">
+            <option value="en" lang="en">English</option>
+            <option value="ru" lang="ru">Русский</option>
+          </select>
         </div>
       </nav>
 
@@ -201,10 +219,10 @@ export default function App() {
         <main className="flex-1 flex items-center justify-center bg-slate-900 bg-[url('https://images.unsplash.com/photo-1530026405186-ed1f139313f8?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center relative">
           <div className="absolute inset-0 bg-slate-900/75 backdrop-blur-sm"></div>
           <div className="relative text-center max-w-3xl text-white px-6 py-12">
-            <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight">Анализ изображений кариотипов</h1>
-            <p className="text-lg md:text-xl my-6 text-slate-200">Исследовательское демо. YOLO11n отмечает области, которые модель связывает с тремя классами трисомий.</p>
+            <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight">{copy.title}</h1>
+            <p className="text-lg md:text-xl my-6 text-slate-200">{copy.intro}</p>
             <button type="button" onClick={() => setView('app')} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-full flex items-center gap-2 mx-auto">
-              Открыть демо <ChevronRight size={20} />
+              {copy.open} <ChevronRight size={20} />
             </button>
           </div>
         </main>
@@ -213,25 +231,25 @@ export default function App() {
       {view === 'app' && (
         <main className="p-4 md:p-8 max-w-7xl mx-auto w-full">
           <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border mb-6">
-            <h1 className="text-2xl font-bold">Исследовательское демо</h1>
-            <p className="mt-2 text-sm text-slate-700">Только для демонстрации и исследований. Не загружайте данные пациентов. Оценки модели нельзя использовать для диагностики.</p>
-            <p className="mt-2 text-sm text-slate-600">До 50 изображений за раз. JPEG или PNG, до {MAX_IMAGE_MIB} МиБ и 12 мегапикселей каждое.</p>
-            {BROWSER_INFERENCE && <p className="mt-2 text-sm text-slate-600">При первом анализе браузер загружает модель. Изображения остаются на вашем устройстве.</p>}
+            <h1 className="text-2xl font-bold">{copy.research}</h1>
+            <p className="mt-2 text-sm text-slate-700">{copy.notice}</p>
+            <p className="mt-2 text-sm text-slate-600">{copy.limits(MAX_IMAGE_MIB)}</p>
+            {BROWSER_INFERENCE && <p className="mt-2 text-sm text-slate-600">{copy.localProcessing}</p>}
             <div className="mt-4 flex flex-col sm:flex-row flex-wrap gap-3">
-              <button type="button" onClick={trySample} disabled={isProcessing} className="rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-50 px-5 py-3 font-semibold text-white">Попробовать пример</button>
+              <button type="button" onClick={trySample} disabled={isProcessing} className="rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-50 px-5 py-3 font-semibold text-white">{copy.trySample}</button>
               <button type="button" onClick={() => fileInputRef.current.click()} disabled={isProcessing} className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-5 py-3 font-semibold hover:bg-slate-100 disabled:opacity-50">
-                <UploadCloud size={20} /> Загрузить изображения
+                <UploadCloud size={20} /> {copy.upload}
               </button>
               <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept="image/jpeg,image/png" />
               {items.length > 0 && (
-                <button type="button" onClick={clearResults} disabled={isProcessing} className="px-3 py-3 text-sm font-medium text-slate-700 underline disabled:opacity-50">Очистить результаты</button>
+                <button type="button" onClick={clearResults} disabled={isProcessing} className="px-3 py-3 text-sm font-medium text-slate-700 underline disabled:opacity-50">{copy.clear}</button>
               )}
             </div>
-            {isProcessing && <p role="status" className="mt-3 text-sm text-blue-700">Обработка изображений…</p>}
-            {sampleError && <p role="alert" className="mt-3 text-sm text-red-700">{sampleError}</p>}
+            {isProcessing && <p role="status" className="mt-3 text-sm text-blue-700">{copy.processing}</p>}
+            {sampleError && <p role="alert" className="mt-3 text-sm text-red-700">{errorText(copy, sampleError, MAX_IMAGE_MIB)}</p>}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-start">
-            {items.map(item => <ResultCard key={item.id} item={item} />)}
+            {items.map(item => <ResultCard key={item.id} item={item} copy={copy} />)}
           </div>
         </main>
       )}
@@ -239,9 +257,9 @@ export default function App() {
       {view === 'about' && (
         <main className="p-4 md:p-8 max-w-3xl mx-auto w-full">
           <div className="bg-white p-6 rounded-2xl border">
-            <h1 className="text-3xl font-bold mb-4">О проекте GenomeX</h1>
-            <p className="text-slate-700">GenomeX — исследовательский проект по компьютерному зрению. Модель обнаружения объектов выделяет области на изображении. React показывает рамки, классы и оценки уверенности модели.</p>
-            <p className="mt-3 text-slate-700">Демо охватывает три класса. Модель может пропускать области и ошибаться при определении класса.</p>
+            <h1 className="text-3xl font-bold mb-4">{copy.aboutTitle}</h1>
+            <p className="text-slate-700">{copy.aboutText}</p>
+            <p className="mt-3 text-slate-700">{copy.aboutLimits}</p>
           </div>
         </main>
       )}
@@ -249,8 +267,8 @@ export default function App() {
       {view === 'future' && (
         <main className="p-4 md:p-8 max-w-3xl mx-auto w-full">
           <div className="bg-white p-6 rounded-2xl border">
-            <h1 className="text-3xl font-bold mb-4">Планы проекта</h1>
-            <p className="text-slate-700">Проверить ошибки на независимой выборке и сравнить версии модели на одних и тех же изображениях с одинаковыми метриками.</p>
+            <h1 className="text-3xl font-bold mb-4">{copy.plansTitle}</h1>
+            <p className="text-slate-700">{copy.plansText}</p>
           </div>
         </main>
       )}
