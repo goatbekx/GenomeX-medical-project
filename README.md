@@ -79,7 +79,7 @@ The checked checkpoint’s SHA-256 is `5289fec6654dd35356bed5601d02f7bbd410b6342
 
 ### Cloudflare Pages browser build
 
-The browser build runs the ONNX export in a Web Worker. Cloudflare Pages serves the frontend, model, and WebAssembly runtime as static assets. Uploaded images stay on the visitor’s device. The regular frontend build uses the configured API, including FastAPI on localhost.
+The public demo runs the ONNX export in a Web Worker. Cloudflare Pages serves the frontend, model, and WebAssembly runtime as static assets. Uploaded images stay on the visitor’s device. The regular frontend build uses the configured API, including FastAPI on localhost.
 
 Generate `node-backend/model/genome-x.onnx` with the export command below. Then run `npm ci` and `npm run build:browser` in `frontend/`. Use `npm run preview -- --outDir dist-browser` to test that build locally. The model is included only in `dist-browser/`. Publishing that directory makes the ONNX export publicly downloadable. [Cloudflare Pages limits](https://developers.cloudflare.com/pages/platform/limits/)
 
