@@ -37,13 +37,13 @@ export function readDetections(rows, { width, height, scale, left, top }) {
   // The exported graph filters by confidence and NMS, then pads unused rows with zeros.
   for (let i = 0; i < rows.length; i += 6) {
     const [x1, y1, x2, y2, confidence, classId] = rows.subarray(i, i + 6);
-    if (confidence <= 0) continue;
-    if (!LABELS[classId]) throw new Error('Unexpected class from the ONNX checkpoint');
-    detections.push({
-      label: LABELS[classId],
-      confidence,
-      box: [toPixel(x1, left, width), toPixel(y1, top, height), toPixel(x2, left, width), toPixel(y2, top, height)],
-    });
+    if (confidence === 0) continue;
+    if (![x1, y1, x2, y2, confidence].every(Number.isFinite) || confidence < 0 || confidence > 1 || !LABELS[classId]) {
+      throw new Error('Invalid detection from the ONNX checkpoint');
+    }
+    const box = [toPixel(x1, left, width), toPixel(y1, top, height), toPixel(x2, left, width), toPixel(y2, top, height)];
+    if (box[0] >= box[2] || box[1] >= box[3]) continue;
+    detections.push({ label: LABELS[classId], confidence, box });
   }
   return { width, height, detections };
 }

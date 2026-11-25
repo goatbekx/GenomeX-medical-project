@@ -123,9 +123,7 @@ export default function App() {
   async function processFiles(files, sample = false) {
     const batch = files.map(file => {
       const error = file.size > MAX_IMAGE_BYTES ? `Изображение превышает ${MAX_IMAGE_MIB} МиБ.` : '';
-      const preview = error ? null : URL.createObjectURL(file);
-      if (preview) previews.current.add(preview);
-      return { id: crypto.randomUUID(), name: file.name, preview, sample, error, status: error ? 'error' : 'pending' };
+      return { id: crypto.randomUUID(), name: file.name, sample, error, status: error ? 'error' : 'pending' };
     });
     setItems(previous => [...batch, ...previous]);
 
@@ -147,7 +145,10 @@ export default function App() {
           updateItem(item.id, { status: 'error', error: 'Сервис вернул несовместимый формат результата.' });
           continue;
         }
-        updateItem(item.id, { status: 'done', prediction: data });
+        // Let inference check the pixel limit before the page decodes the preview.
+        const preview = URL.createObjectURL(file);
+        previews.current.add(preview);
+        updateItem(item.id, { status: 'done', prediction: data, preview });
       } catch (error) {
         updateItem(item.id, { status: 'error', error: inferenceError(error) });
       }

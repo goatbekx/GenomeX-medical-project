@@ -92,8 +92,15 @@ async function predict(file) {
     const pixels = context.getImageData(0, 0, resizedWidth, resizedHeight).data;
     tensor = new ort.Tensor('float32', imageTensorData(pixels, geometry, 4), [1, 3, inputHeight, inputWidth]);
     const model = await getSession();
-    ({ output0: output } = await model.run({ images: tensor }));
-    return readDetections(output.data, geometry);
+    try {
+      ({ output0: output } = await model.run({ images: tensor }));
+      if (output?.dims.length !== 3 || output.dims[0] !== 1 || output.dims[2] !== 6) {
+        throw new Error('Unexpected detection shape from the ONNX checkpoint');
+      }
+      return readDetections(output.data, geometry);
+    } catch (error) {
+      throw Object.assign(error, { status: 500 });
+    }
   } finally {
     bitmap.close();
     tensor?.dispose();

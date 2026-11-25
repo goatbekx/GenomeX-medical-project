@@ -12,17 +12,26 @@ export function predictInBrowser(file) {
       if (error) request.reject(Object.assign(new Error(error.message), { status: error.status }));
       else request.resolve(result);
     };
-    worker.onerror = event => {
-      event.preventDefault();
+    const resetWorker = () => {
       worker.terminate();
       worker = undefined;
       for (const request of pending.values()) request.reject(new Error('Browser inference worker failed.'));
       pending.clear();
     };
+    worker.onerror = event => {
+      event.preventDefault();
+      resetWorker();
+    };
+    worker.onmessageerror = resetWorker;
   }
   return new Promise((resolve, reject) => {
     const id = nextId++;
     pending.set(id, { resolve, reject });
-    worker.postMessage({ id, file });
+    try {
+      worker.postMessage({ id, file });
+    } catch (error) {
+      pending.delete(id);
+      reject(error);
+    }
   });
 }
