@@ -1,0 +1,12 @@
+[build]
+publish = "public"
+
+[functions]
+directory = "functions"
+node_bundler = "esbuild"
+external_node_modules = ["onnxruntime-web", "sharp"]
+included_files = [
+  "model/genome-x.onnx",
+  "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs",
+  "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm"
+]
